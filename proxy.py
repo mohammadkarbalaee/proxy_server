@@ -107,6 +107,13 @@ def fetch_from_server(client_socket, method, url, headers, cache_file_path, requ
 
         web_server_socket.close()
 
+        response_str = response.decode('utf-8', errors='ignore')
+        status_code = int(response_str.split('\n')[0].split()[1])
+
+        if not str(status_code).startswith("2"):
+            handle_error(client_socket, f"{status_code}: {response_str}", status_code=status_code)
+            return
+
         with open(cache_file_path, 'wb') as cache_file:
             cache_file.write(response)
 
@@ -115,9 +122,10 @@ def fetch_from_server(client_socket, method, url, headers, cache_file_path, requ
     except Exception as e:
         handle_error(client_socket, str(e))
 
-def handle_error(client_socket, error_message):
-    error_response = f"HTTP/1.1 500 Internal Server Error\r\nContent-Length: {len(error_message)}\r\n\r\n{error_message}"
+def handle_error(client_socket, error_message, status_code=500):
+    error_response = f"HTTP/1.1 {status_code} {error_message}\r\nContent-Length: {len(error_message)}\r\n\r\n{error_message}"
     client_socket.sendall(error_response.encode())
+
 
 def start_server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

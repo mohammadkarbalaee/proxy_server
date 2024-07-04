@@ -1,0 +1,25 @@
+HTTP/1.1 200 OK
+Date: Thu, 04 Jul 2024 16:40:15 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 375
+Connection: close
+Server: nginx/1.25.3
+ETag: W/"177-1nGEP0inpw8yKK29+oJEay2dQCk"
+set-cookie: sails.sid=s%3AUeEFyYAgUmZA3Mat9fbqZijpNA5OrhBF.P%2BR7GrxzgkA%2FRZeANyMeASmAuaVhBnm4pC0ThV%2F0ToU; Path=/; HttpOnly
+
+{
+  "args": {},
+  "data": {},
+  "files": {},
+  "form": {},
+  "headers": {
+    "host": "www.postman-echo.com",
+    "x-request-start": "t=1720111215.251",
+    "content-length": "0",
+    "x-forwarded-proto": "http",
+    "x-forwarded-port": "80",
+    "x-amzn-trace-id": "Root=1-6686d06f-5b40d6e27779ccf6100d0eb5"
+  },
+  "json": null,
+  "url": "http://www.postman-echo.com/post"
+}
