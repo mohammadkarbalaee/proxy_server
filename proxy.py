@@ -5,29 +5,24 @@ import hashlib
 import time
 import csv
 
-# Constants
-PORT = 2324
+PORT = 8888
 CACHE_DIR = './cache'
 BUFFER_SIZE = 4096
 LOG_FILE = 'request_logs.csv'
 fieldnames = ['Request ID', 'URL', 'Start Time', 'End Time', 'Elapsed Time']
 
-# Initialize log file
 def initialize_log_file():
     with open(LOG_FILE, 'w', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
-# Ensure cache directory exists
 def ensure_cache_dir():
     if not os.path.exists(CACHE_DIR):
         os.makedirs(CACHE_DIR)
 
-# Generate cache key for URL
 def get_cache_key(url):
     return hashlib.md5(url.encode()).hexdigest()
 
-# Log request data to CSV file
 def log_data(request_id, url, start_time, end_time):
     elapsed_time = end_time - start_time
     with open(LOG_FILE, 'a', newline='') as csvfile:
@@ -40,7 +35,6 @@ def log_data(request_id, url, start_time, end_time):
             'Elapsed Time': elapsed_time
         })
 
-# Handle client requests
 def handle_client(client_socket):
     global request_counter
 
@@ -88,7 +82,6 @@ def handle_client(client_socket):
     client_socket.close()
     log_data(request_id, url, start_time, time.time())
 
-# Fetch data from the original server
 def fetch_from_server(client_socket, method, url, headers, cache_file_path, request_id, start_time):
     try:
         web_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -122,12 +115,10 @@ def fetch_from_server(client_socket, method, url, headers, cache_file_path, requ
     except Exception as e:
         handle_error(client_socket, str(e))
 
-# Handle errors by sending a response to the client
 def handle_error(client_socket, error_message):
     error_response = f"HTTP/1.1 500 Internal Server Error\r\nContent-Length: {len(error_message)}\r\n\r\n{error_message}"
     client_socket.sendall(error_response.encode())
 
-# Start the proxy server
 def start_server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.bind(('', PORT))
