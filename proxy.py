@@ -1,102 +1,147 @@
 import socket
 import threading
-import hashlib
 import os
+import hashlib
+import time
+import csv
 
 # Constants
-BUFFER_SIZE = 4096
+PORT = 2324
 CACHE_DIR = './cache'
+BUFFER_SIZE = 4096
+LOG_FILE = 'request_logs.csv'
+fieldnames = ['Request ID', 'URL', 'Start Time', 'End Time', 'Elapsed Time']
 
-# Ensure the cache directory exists
-os.makedirs(CACHE_DIR, exist_ok=True)
+# Initialize log file
+def initialize_log_file():
+    with open(LOG_FILE, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
 
-def hash_url(url):
-    """Create a unique hash for the URL."""
+# Ensure cache directory exists
+def ensure_cache_dir():
+    if not os.path.exists(CACHE_DIR):
+        os.makedirs(CACHE_DIR)
+
+# Generate cache key for URL
+def get_cache_key(url):
     return hashlib.md5(url.encode()).hexdigest()
 
-def cache_response(url, response):
-    """Cache the response to a file with the URL's hash as the filename."""
-    url_hash = hash_url(url)
-    cache_file_path = os.path.join(CACHE_DIR, url_hash)
-    with open(cache_file_path, 'wb') as cache_file:
-        cache_file.write(response)
+# Log request data to CSV file
+def log_data(request_id, url, start_time, end_time):
+    elapsed_time = end_time - start_time
+    with open(LOG_FILE, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writerow({
+            'Request ID': request_id,
+            'URL': url,
+            'Start Time': start_time,
+            'End Time': end_time,
+            'Elapsed Time': elapsed_time
+        })
 
-def get_cached_response(url):
-    """Retrieve the cached response for a URL if it exists."""
-    url_hash = hash_url(url)
-    cache_file_path = os.path.join(CACHE_DIR, url_hash)
-    if os.path.exists(cache_file_path):
-        with open(cache_file_path, 'rb') as cache_file:
-            return cache_file.read()
-    return None
-
+# Handle client requests
 def handle_client(client_socket):
-    """Handle the client's request."""
-    request = client_socket.recv(BUFFER_SIZE)
-    request_line = request.split(b'\n')[0]
-    url = request_line.split(b' ')[1].decode()
-    
-    # Check if the response is in the cache
-    cached_response = get_cached_response(url)
-    if cached_response:
-        client_socket.sendall(cached_response)
-    else:
-        # Parse the URL to extract the host and port
-        http_pos = url.find("://")
-        temp = url[(http_pos+3):] if http_pos != -1 else url
-        port_pos = temp.find(":")
-        webserver_pos = temp.find("/")
-        webserver = ""
-        port = -1
+    global request_counter
 
-        if webserver_pos == -1:
-            webserver_pos = len(temp)
+    with counter_lock:
+        request_id = request_counter
+        request_counter += 1
 
-        if port_pos == -1 or webserver_pos < port_pos:
-            port = 80
-            webserver = temp[:webserver_pos]
-        else:
-            port = int((temp[(port_pos+1):])[:webserver_pos-port_pos-1])
-            webserver = temp[:port_pos]
+    start_time = time.time()
 
-        try:
-            # Connect to the web server
-            webserver_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            webserver_socket.connect((webserver, port))
-            webserver_socket.sendall(request)
-            
-            # Receive response from web server
-            response = b""
-            while True:
-                data = webserver_socket.recv(BUFFER_SIZE)
-                if len(data) > 0:
-                    response += data
-                else:
-                    break
-            
-            # Cache the response
-            cache_response(url, response)
+    try:
+        request = client_socket.recv(BUFFER_SIZE).decode()
+        headers = request.split('\r\n')
+        if len(headers) < 1:
+            client_socket.close()
+            return
 
-            # Send the response to the client
-            client_socket.sendall(response)
-            webserver_socket.close()
-        except Exception as e:
-            print(f"Error: {e}")
-    
+        first_line = headers[0].split()
+        if len(first_line) < 2:
+            client_socket.close()
+            return
+
+        method = first_line[0]
+        url = first_line[1][1:]
+
+        if not url.startswith("www."):
+            client_socket.close()
+            return
+
+        cache_key = get_cache_key(url)
+        cache_file_path = os.path.join(CACHE_DIR, cache_key)
+
+        if os.path.exists(cache_file_path):
+            with open(cache_file_path, 'rb') as cache_file:
+                response = cache_file.read()
+                client_socket.sendall(response)
+            log_data(request_id, url, start_time, time.time())
+            client_socket.close()
+            return
+
+        fetch_from_server(client_socket, method, url, headers, cache_file_path, request_id, start_time)
+
+    except Exception as e:
+        handle_error(client_socket, str(e))
+
     client_socket.close()
+    log_data(request_id, url, start_time, time.time())
 
-def start_proxy_server(host='127.0.0.1', port=8888):
-    """Start the proxy server."""
+# Fetch data from the original server
+def fetch_from_server(client_socket, method, url, headers, cache_file_path, request_id, start_time):
+    try:
+        web_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        web_server_socket.connect((url.split('/')[0], 80))
+
+        if method == 'GET':
+            web_server_socket.sendall(f"GET /{'/'.join(url.split('/')[1:])} HTTP/1.0\r\nHost: {url.split('/')[0]}\r\n\r\n".encode())
+        elif method == 'POST':
+            content_length = 0
+            for header in headers:
+                if header.lower().startswith('content-length:'):
+                    content_length = int(header.split()[1])
+                    break
+            post_data = client_socket.recv(content_length).decode()
+            web_server_socket.sendall(f"POST /{'/'.join(url.split('/')[1:])} HTTP/1.0\r\nHost: {url.split('/')[0]}\r\nContent-Length: {content_length}\r\n\r\n{post_data}".encode())
+
+        response = b""
+        while True:
+            data = web_server_socket.recv(BUFFER_SIZE)
+            if not data:
+                break
+            response += data
+
+        web_server_socket.close()
+
+        with open(cache_file_path, 'wb') as cache_file:
+            cache_file.write(response)
+
+        client_socket.sendall(response)
+
+    except Exception as e:
+        handle_error(client_socket, str(e))
+
+# Handle errors by sending a response to the client
+def handle_error(client_socket, error_message):
+    error_response = f"HTTP/1.1 500 Internal Server Error\r\nContent-Length: {len(error_message)}\r\n\r\n{error_message}"
+    client_socket.sendall(error_response.encode())
+
+# Start the proxy server
+def start_server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind((host, port))
+    server_socket.bind(('', PORT))
     server_socket.listen(5)
-    print(f"[*] Listening on {host}:{port}")
-    
+    print(f"Proxy server is running on port {PORT}")
+
     while True:
         client_socket, addr = server_socket.accept()
-        print(f"[*] Accepted connection from {addr[0]}:{addr[1]}")
         client_handler = threading.Thread(target=handle_client, args=(client_socket,))
         client_handler.start()
 
 if __name__ == "__main__":
-    start_proxy_server()
+    initialize_log_file()
+    ensure_cache_dir()
+    request_counter = 0
+    counter_lock = threading.Lock()
+    start_server()
